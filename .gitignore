@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Config (contains API keys)
+# ※ config.json はAPIキーを含む可能性があるので除外
+# ※ ユーザーごとに ~/.lanch-app/config.json で管理

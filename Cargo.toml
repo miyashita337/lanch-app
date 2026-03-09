@@ -1,0 +1,43 @@
+[package]
+name = "lanch-app"
+version = "1.0.0"
+edition = "2021"
+description = "Alfred/Raycast風の統一ランチャー - 翻訳 + Markdown整形"
+
+[dependencies]
+# GUI フレームワーク（イミディエイトモードGUI）
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }
+
+# HTTP クライアント（翻訳API / Claude API へのリクエスト用）
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+
+# シリアライズ/デシリアライズ（設定ファイルの読み書き）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# ホームディレクトリの取得（クロスプラットフォーム対応）
+dirs = "6"
+
+# クリップボード操作
+arboard = "3"
+
+# システムトレイアイコン（tauri-apps製）
+tray-icon = "0.19"
+
+# グローバルホットキー登録（tauri-apps製）
+global-hotkey = "0.7"
+
+# Windows API（メッセージループ用）
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# リリースビルドの最適化設定
+[profile.release]
+opt-level = "s"    # サイズ最適化（小さいバイナリ）
+strip = true       # デバッグ情報を除去
