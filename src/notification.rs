@@ -10,6 +10,9 @@
 use std::process::Command;
 use std::thread;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 /// バルーン通知を表示する（非同期・ノンブロッキング）
 ///
 /// PowerShell を裏で起動してシステム通知を出す。
