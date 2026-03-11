@@ -369,20 +369,29 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
         println!("  {}: 選択テキストをMarkdown整形", format_spec);
     }
 
-    // Claude CLI の利用可能性をチェック
-    if formatter::check_cli_available() {
-        println!("  Claude CLI: 利用可能 ✓（Max Plan サブスクリプション使用）");
-    } else {
-        println!();
-        println!("  ============================================");
-        println!("  ⚠ claude コマンドが見つかりません！");
-        println!("  Markdown整形（Ctrl+Shift+F）を使うには");
-        println!("  Claude Code をインストールしてください:");
-        println!();
-        println!("  npm install -g @anthropic-ai/claude-code");
-        println!("  claude login");
-        println!("  ============================================");
-        notification::show_error("Lanch App", "claude コマンドが見つかりません。Claude Code をインストールしてください。");
+    // Markdown整形バックエンドの検出
+    let backend = formatter::detect_backend();
+    match &backend {
+        formatter::Backend::Api => {
+            println!("  Markdown整形: API直接モード ✓（高速: 2-3秒）");
+        }
+        formatter::Backend::Cli => {
+            println!("  Markdown整形: Claude CLI モード ✓（Max Plan 枠使用）");
+            println!("    ※ ANTHROPIC_API_KEY を設定すると高速モード（2-3秒）に切替可能");
+        }
+        formatter::Backend::None => {
+            println!();
+            println!("  ============================================");
+            println!("  ⚠ Markdown整形が利用できません！");
+            println!("  以下のいずれかを設定してください:");
+            println!();
+            println!("  【高速】ANTHROPIC_API_KEY 環境変数を設定");
+            println!("  【無料】Claude Code をインストール:");
+            println!("    npm install -g @anthropic-ai/claude-code");
+            println!("    claude login");
+            println!("  ============================================");
+            notification::show_error("Lanch App", "Markdown整形が利用できません。設定方法はコンソールを確認してください。");
+        }
     }
 
     // ホットキー連打防止用タイムスタンプ

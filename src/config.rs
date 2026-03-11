@@ -73,7 +73,7 @@ impl Default for Config {
             target_lang_ja: "en".to_string(),
             target_lang_en: "ja".to_string(),
             claude_api_key: String::new(),
-            claude_model: "claude-sonnet-4-20250514".to_string(),
+            claude_model: "claude-haiku-4-5-20251001".to_string(),
             font_size: 16.0,
             opacity: 0.95,
             log_enabled: true,
