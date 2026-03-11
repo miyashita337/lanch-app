@@ -98,6 +98,9 @@ fn call_claude_cli(
             "--system-prompt", FORMAT_SYSTEM_PROMPT,
             "--no-session-persistence",
         ])
+        // ANTHROPIC_API_KEY が設定されていると Claude CLI が
+        // Max Plan ではなく API キーを使ってしまうため、明示的に除外
+        .env_remove("ANTHROPIC_API_KEY")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
