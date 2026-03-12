@@ -283,3 +283,138 @@ fn normalize_model_name(model: &str) -> String {
         m.to_string()
     }
 }
+
+// =============================================================================
+// テスト
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Backend enum のテスト ---
+
+    #[test]
+    fn test_backend_equality() {
+        assert_eq!(Backend::Api, Backend::Api);
+        assert_eq!(Backend::Cli, Backend::Cli);
+        assert_eq!(Backend::None, Backend::None);
+        assert_ne!(Backend::Api, Backend::Cli);
+        assert_ne!(Backend::Api, Backend::None);
+    }
+
+    #[test]
+    fn test_backend_clone() {
+        let backend = Backend::Api;
+        let cloned = backend.clone();
+        assert_eq!(backend, cloned);
+    }
+
+    // --- backend_label のテスト ---
+
+    #[test]
+    fn test_backend_label_api() {
+        assert_eq!(backend_label(&Backend::Api), "API直接（高速）");
+    }
+
+    #[test]
+    fn test_backend_label_cli() {
+        assert_eq!(backend_label(&Backend::Cli), "Claude CLI（Max Plan）");
+    }
+
+    #[test]
+    fn test_backend_label_none() {
+        assert_eq!(backend_label(&Backend::None), "利用不可");
+    }
+
+    // --- normalize_model_name のテスト ---
+
+    #[test]
+    fn test_normalize_model_name_empty() {
+        assert_eq!(normalize_model_name(""), "haiku");
+    }
+
+    #[test]
+    fn test_normalize_model_name_whitespace() {
+        assert_eq!(normalize_model_name("   "), "haiku");
+        assert_eq!(normalize_model_name("\t"), "haiku");
+    }
+
+    #[test]
+    fn test_normalize_model_name_valid() {
+        assert_eq!(
+            normalize_model_name("claude-haiku-4-5-20251001"),
+            "claude-haiku-4-5-20251001"
+        );
+        assert_eq!(normalize_model_name("haiku"), "haiku");
+    }
+
+    #[test]
+    fn test_normalize_model_name_trims() {
+        assert_eq!(
+            normalize_model_name("  claude-haiku-4-5-20251001  "),
+            "claude-haiku-4-5-20251001"
+        );
+    }
+
+    // --- FormatResult のテスト ---
+
+    #[test]
+    fn test_format_result_struct() {
+        let result = FormatResult {
+            formatted: "# Hello\n\nWorld".to_string(),
+        };
+        assert_eq!(result.formatted, "# Hello\n\nWorld");
+    }
+
+    #[test]
+    fn test_format_result_clone() {
+        let result = FormatResult {
+            formatted: "test".to_string(),
+        };
+        let cloned = result.clone();
+        assert_eq!(result.formatted, cloned.formatted);
+    }
+
+    // --- format_markdown の空入力テスト ---
+
+    #[test]
+    fn test_format_markdown_empty_input() {
+        let config = crate::config::Config::default();
+        let result = format_markdown("", &config).unwrap();
+        assert_eq!(result.formatted, "");
+    }
+
+    #[test]
+    fn test_format_markdown_whitespace_input() {
+        let config = crate::config::Config::default();
+        let result = format_markdown("   \n\t  ", &config).unwrap();
+        assert_eq!(result.formatted, "");
+    }
+
+    // --- detect_backend のテスト ---
+    // 注: 環境変数に依存するため、実行環境で結果が変わる
+
+    #[test]
+    fn test_detect_backend_returns_valid_variant() {
+        let backend = detect_backend();
+        // 何らかの Backend が返ることを確認（環境依存）
+        match backend {
+            Backend::Api | Backend::Cli | Backend::None => {} // OK
+        }
+    }
+
+    // --- システムプロンプトのテスト ---
+
+    #[test]
+    fn test_system_prompt_not_empty() {
+        assert!(!FORMAT_SYSTEM_PROMPT.is_empty());
+    }
+
+    #[test]
+    fn test_system_prompt_contains_key_instructions() {
+        assert!(FORMAT_SYSTEM_PROMPT.contains("Markdown"));
+        assert!(FORMAT_SYSTEM_PROMPT.contains("コードブロック"));
+        assert!(FORMAT_SYSTEM_PROMPT.contains("テーブル"));
+    }
+}

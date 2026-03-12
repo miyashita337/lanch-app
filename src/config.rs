@@ -187,3 +187,120 @@ pub fn save_config(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+// =============================================================================
+// テスト
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- デフォルト値のテスト ---
+
+    #[test]
+    fn test_default_config_values() {
+        let config = Config::default();
+        assert_eq!(config.engine, "google");
+        assert_eq!(config.source_lang, "auto");
+        assert_eq!(config.target_lang_ja, "en");
+        assert_eq!(config.target_lang_en, "ja");
+        assert_eq!(config.claude_model, "claude-haiku-4-5-20251001");
+        assert_eq!(config.font_size, 16.0);
+        assert_eq!(config.opacity, 0.95);
+        assert!(config.log_enabled);
+    }
+
+    #[test]
+    fn test_default_hotkeys() {
+        let config = Config::default();
+        assert_eq!(config.hotkey_popup, "ctrl+shift+t");
+        assert_eq!(config.hotkey_selected, "ctrl+shift+y");
+        assert_eq!(config.hotkey_format, "ctrl+shift+f");
+        assert_eq!(config.hotkey_clipboard_history, "ctrl+shift+v");
+    }
+
+    #[test]
+    fn test_default_api_keys_empty() {
+        let config = Config::default();
+        assert!(config.deepl_api_key.is_empty());
+        assert!(config.claude_api_key.is_empty());
+    }
+
+    // --- シリアライズ/デシリアライズのテスト ---
+
+    #[test]
+    fn test_serialize_deserialize_roundtrip() {
+        let config = Config::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: Config = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.engine, config.engine);
+        assert_eq!(deserialized.source_lang, config.source_lang);
+        assert_eq!(deserialized.hotkey_popup, config.hotkey_popup);
+        assert_eq!(deserialized.claude_model, config.claude_model);
+        assert_eq!(deserialized.font_size, config.font_size);
+        assert_eq!(deserialized.hotkey_clipboard_history, config.hotkey_clipboard_history);
+    }
+
+    #[test]
+    fn test_deserialize_partial_json_uses_defaults() {
+        // 一部のフィールドだけのJSONでもデフォルト値で補完される
+        let json = r#"{"engine": "deepl", "font_size": 20.0}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+
+        assert_eq!(config.engine, "deepl");
+        assert_eq!(config.font_size, 20.0);
+        // 省略されたフィールドはデフォルト値
+        assert_eq!(config.source_lang, "auto");
+        assert_eq!(config.hotkey_popup, "ctrl+shift+t");
+        assert_eq!(config.claude_model, "claude-haiku-4-5-20251001");
+        assert_eq!(config.hotkey_clipboard_history, "ctrl+shift+v");
+    }
+
+    #[test]
+    fn test_deserialize_unknown_fields_ignored() {
+        // 未知のフィールドがあってもパースに失敗しない
+        let json = r#"{"engine": "google", "unknown_field": "value", "another": 42}"#;
+        let result: Result<Config, _> = serde_json::from_str(json);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_deserialize_empty_json_uses_all_defaults() {
+        let json = "{}";
+        let config: Config = serde_json::from_str(json).unwrap();
+        let default = Config::default();
+
+        assert_eq!(config.engine, default.engine);
+        assert_eq!(config.hotkey_popup, default.hotkey_popup);
+        assert_eq!(config.claude_model, default.claude_model);
+    }
+
+    // --- 設定値のバリデーション的テスト ---
+
+    #[test]
+    fn test_opacity_in_valid_range() {
+        let config = Config::default();
+        assert!(config.opacity >= 0.0 && config.opacity <= 1.0);
+    }
+
+    #[test]
+    fn test_font_size_positive() {
+        let config = Config::default();
+        assert!(config.font_size > 0.0);
+    }
+
+    #[test]
+    fn test_custom_config_serialization() {
+        let mut config = Config::default();
+        config.engine = "deepl".to_string();
+        config.deepl_api_key = "test-key-123".to_string();
+        config.hotkey_clipboard_history = "alt+v".to_string();
+
+        let json = serde_json::to_string_pretty(&config).unwrap();
+        assert!(json.contains("deepl"));
+        assert!(json.contains("test-key-123"));
+        assert!(json.contains("alt+v"));
+    }
+}

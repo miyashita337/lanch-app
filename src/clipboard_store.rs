@@ -165,6 +165,18 @@ impl ClipboardStore {
         store
     }
 
+    /// テスト用: 任意のディレクトリでストアを作成（永続化なし）
+    #[cfg(test)]
+    pub fn new_with_dir(store_dir: PathBuf, retention_days: i64) -> Self {
+        let mut store = Self {
+            entries: Vec::new(),
+            store_dir,
+            retention_days,
+        };
+        store.load_index();
+        store
+    }
+
     /// ストレージディレクトリのパスを返す
     #[allow(dead_code)]
     pub fn store_dir(&self) -> &PathBuf {
@@ -362,5 +374,377 @@ fn format_bytes(bytes: usize) -> String {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
+}
+
+// =============================================================================
+// テスト
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    // --- ヘルパー関数のテスト ---
+
+    #[test]
+    fn test_looks_like_json_object() {
+        assert!(looks_like_json(r#"{"key": "value"}"#));
+        assert!(looks_like_json(r#"  { "a": 1 }  "#)); // 前後に空白
+    }
+
+    #[test]
+    fn test_looks_like_json_array() {
+        assert!(looks_like_json(r#"[1, 2, 3]"#));
+        assert!(looks_like_json(r#"  [{"a":1}]  "#));
+    }
+
+    #[test]
+    fn test_looks_like_json_negative() {
+        assert!(!looks_like_json("hello world"));
+        assert!(!looks_like_json("{ incomplete"));
+        assert!(!looks_like_json("[no closing"));
+        assert!(!looks_like_json(""));
+    }
+
+    #[test]
+    fn test_truncate_preview_short() {
+        let text = "short text";
+        assert_eq!(truncate_preview(text, 200), "short text");
+    }
+
+    #[test]
+    fn test_truncate_preview_long() {
+        let text = "a".repeat(250);
+        let preview = truncate_preview(&text, 200);
+        assert!(preview.ends_with("..."));
+        // 200文字 + "..." = 203文字
+        assert_eq!(preview.chars().count(), 203);
+    }
+
+    #[test]
+    fn test_truncate_preview_newlines() {
+        let text = "line1\nline2\rline3";
+        let preview = truncate_preview(text, 200);
+        assert_eq!(preview, "line1 line2 line3");
+        assert!(!preview.contains('\n'));
+        assert!(!preview.contains('\r'));
+    }
+
+    #[test]
+    fn test_format_bytes_small() {
+        assert_eq!(format_bytes(100), "100 B");
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+    }
+
+    #[test]
+    fn test_format_bytes_kb() {
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+    }
+
+    #[test]
+    fn test_format_bytes_mb() {
+        assert_eq!(format_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 5), "5.0 MB");
+    }
+
+    // --- EntryType のテスト ---
+
+    #[test]
+    fn test_entry_type_display() {
+        assert_eq!(format!("{}", EntryType::Text), "Text");
+        assert_eq!(format!("{}", EntryType::Json), "JSON");
+        assert_eq!(format!("{}", EntryType::Image), "Image");
+    }
+
+    #[test]
+    fn test_entry_type_equality() {
+        assert_eq!(EntryType::Text, EntryType::Text);
+        assert_ne!(EntryType::Text, EntryType::Json);
+    }
+
+    // --- ClipboardEntry のテスト ---
+
+    #[test]
+    fn test_new_text_entry() {
+        let entry = ClipboardEntry::new_text("Hello, world!");
+        assert_eq!(entry.entry_type, EntryType::Text);
+        assert_eq!(entry.text_content, Some("Hello, world!".to_string()));
+        assert_eq!(entry.preview, "Hello, world!");
+        assert_eq!(entry.size_bytes, 13);
+        assert!(entry.blob_file.is_none());
+        assert!(!entry.id.is_empty());
+    }
+
+    #[test]
+    fn test_new_text_entry_json_detection() {
+        let entry = ClipboardEntry::new_text(r#"{"key": "value"}"#);
+        assert_eq!(entry.entry_type, EntryType::Json);
+    }
+
+    #[test]
+    fn test_new_text_entry_array_json_detection() {
+        let entry = ClipboardEntry::new_text(r#"[1, 2, 3]"#);
+        assert_eq!(entry.entry_type, EntryType::Json);
+    }
+
+    #[test]
+    fn test_new_text_entry_not_json() {
+        let entry = ClipboardEntry::new_text("just plain text");
+        assert_eq!(entry.entry_type, EntryType::Text);
+    }
+
+    // --- ClipboardEntry::matches のテスト ---
+
+    #[test]
+    fn test_matches_empty_query() {
+        let entry = ClipboardEntry::new_text("anything");
+        assert!(entry.matches("")); // 空クエリは全マッチ
+    }
+
+    #[test]
+    fn test_matches_text_content() {
+        let entry = ClipboardEntry::new_text("Hello World こんにちは");
+        assert!(entry.matches("hello")); // 大文字小文字無視
+        assert!(entry.matches("WORLD"));
+        assert!(entry.matches("こんにちは"));
+        assert!(!entry.matches("goodbye"));
+    }
+
+    #[test]
+    fn test_matches_by_date() {
+        let entry = ClipboardEntry::new_text("test");
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        assert!(entry.matches(&today));
+    }
+
+    #[test]
+    fn test_matches_by_entry_type() {
+        let text_entry = ClipboardEntry::new_text("plain text");
+        assert!(text_entry.matches("text"));
+
+        let json_entry = ClipboardEntry::new_text(r#"{"a": 1}"#);
+        assert!(json_entry.matches("json"));
+    }
+
+    #[test]
+    fn test_matches_by_preview() {
+        let entry = ClipboardEntry::new_text("unique_keyword_xyz");
+        assert!(entry.matches("unique_keyword"));
+    }
+
+    // --- ClipboardStore のテスト（一時ディレクトリ使用） ---
+
+    fn create_temp_store() -> (ClipboardStore, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().expect("一時ディレクトリの作成に失敗");
+        let store = ClipboardStore::new_with_dir(tmp.path().to_path_buf(), 7);
+        (store, tmp)
+    }
+
+    #[test]
+    fn test_store_add_text() {
+        let (mut store, _tmp) = create_temp_store();
+        assert_eq!(store.len(), 0);
+
+        store.add_text("first entry");
+        assert_eq!(store.len(), 1);
+
+        store.add_text("second entry");
+        assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn test_store_add_text_empty_ignored() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("");
+        store.add_text("   ");
+        store.add_text("\n\t ");
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_store_add_text_duplicate_ignored() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("same text");
+        store.add_text("same text"); // 重複 → 無視
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_store_add_text_different_not_duplicate() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("text A");
+        store.add_text("text B");
+        store.add_text("text A"); // 直前と異なるので追加される
+        assert_eq!(store.len(), 3);
+    }
+
+    #[test]
+    fn test_store_add_image_empty_ignored() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_image(&[]);
+        assert_eq!(store.len(), 0);
+    }
+
+    #[test]
+    fn test_store_add_image() {
+        let (mut store, _tmp) = create_temp_store();
+        let fake_png = vec![0x89, 0x50, 0x4E, 0x47]; // 最小限のPNGヘッダー
+        store.add_image(&fake_png);
+        assert_eq!(store.len(), 1);
+    }
+
+    #[test]
+    fn test_store_add_image_duplicate_size_ignored() {
+        let (mut store, _tmp) = create_temp_store();
+        let data = vec![1, 2, 3, 4];
+        store.add_image(&data);
+        store.add_image(&data); // 同サイズ → 重複とみなす
+        assert_eq!(store.len(), 1);
+    }
+
+    // --- 検索・ページネーションのテスト ---
+
+    #[test]
+    fn test_search_all() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("apple");
+        store.add_text("banana");
+        store.add_text("cherry");
+
+        let (entries, total) = store.search("", 0, 100);
+        assert_eq!(total, 3);
+        assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn test_search_keyword() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("apple pie");
+        store.add_text("banana split");
+        store.add_text("apple sauce");
+
+        let (entries, total) = store.search("apple", 0, 100);
+        assert_eq!(total, 2);
+        assert_eq!(entries.len(), 2);
+    }
+
+    #[test]
+    fn test_search_case_insensitive() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("Hello World");
+
+        let (_, total) = store.search("hello", 0, 100);
+        assert_eq!(total, 1);
+
+        let (_, total) = store.search("HELLO", 0, 100);
+        assert_eq!(total, 1);
+    }
+
+    #[test]
+    fn test_search_pagination() {
+        let (mut store, _tmp) = create_temp_store();
+        for i in 0..5 {
+            store.add_text(&format!("entry {}", i));
+        }
+
+        // 1ページ2件で3ページに分かれる
+        let (page0, total) = store.search("", 0, 2);
+        assert_eq!(total, 5);
+        assert_eq!(page0.len(), 2);
+
+        let (page1, _) = store.search("", 1, 2);
+        assert_eq!(page1.len(), 2);
+
+        let (page2, _) = store.search("", 2, 2);
+        assert_eq!(page2.len(), 1);
+
+        // 範囲外ページ
+        let (page3, _) = store.search("", 3, 2);
+        assert_eq!(page3.len(), 0);
+    }
+
+    #[test]
+    fn test_search_no_results() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("hello");
+
+        let (entries, total) = store.search("nonexistent", 0, 100);
+        assert_eq!(total, 0);
+        assert_eq!(entries.len(), 0);
+    }
+
+    // --- 永続化のテスト ---
+
+    #[test]
+    fn test_persistence_save_and_load() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_path_buf();
+
+        // ストアに追加して保存
+        {
+            let mut store = ClipboardStore::new_with_dir(dir.clone(), 7);
+            store.add_text("persisted entry 1");
+            store.add_text("persisted entry 2");
+        }
+
+        // 新しいストアでリロード
+        {
+            let store = ClipboardStore::new_with_dir(dir, 7);
+            assert_eq!(store.len(), 2);
+            let (entries, _) = store.search("persisted", 0, 100);
+            assert_eq!(entries.len(), 2);
+        }
+    }
+
+    #[test]
+    fn test_blob_path() {
+        let (store, _tmp) = create_temp_store();
+        let path = store.blob_path("test.png");
+        assert!(path.ends_with("blobs/test.png") || path.ends_with("blobs\\test.png"));
+    }
+
+    // --- ローテーションのテスト ---
+
+    #[test]
+    fn test_rotate_removes_old_entries() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let mut store = ClipboardStore::new_with_dir(dir, 7);
+
+        // 現在のエントリを追加
+        store.add_text("recent");
+
+        // 古いエントリを手動で追加（8日前）
+        let old_entry = ClipboardEntry {
+            id: uuid::Uuid::new_v4().to_string(),
+            timestamp: Local::now() - chrono::Duration::days(8),
+            entry_type: EntryType::Text,
+            text_content: Some("old entry".to_string()),
+            blob_file: None,
+            preview: "old entry".to_string(),
+            size_bytes: 9,
+        };
+        store.entries.push(old_entry);
+        assert_eq!(store.len(), 2);
+
+        store.rotate();
+        assert_eq!(store.len(), 1); // 古いのが削除された
+
+        let (entries, _) = store.search("recent", 0, 100);
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn test_rotate_keeps_recent_entries() {
+        let (mut store, _tmp) = create_temp_store();
+        store.add_text("today's entry");
+
+        let before = store.len();
+        store.rotate();
+        assert_eq!(store.len(), before); // 最近のは消えない
     }
 }

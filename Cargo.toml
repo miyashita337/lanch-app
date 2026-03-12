@@ -48,6 +48,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# テスト用依存関係
+[dev-dependencies]
+tempfile = "3"
+
 # リリースビルドの最適化設定
 [profile.release]
 opt-level = "s"    # サイズ最適化（小さいバイナリ）
