@@ -13,6 +13,9 @@
 
 // モジュール宣言
 mod clipboard;
+mod clipboard_history;
+mod clipboard_store;
+mod clipboard_ui;
 mod config;
 mod formatter;
 mod lang;

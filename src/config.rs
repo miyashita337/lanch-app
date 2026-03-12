@@ -62,6 +62,9 @@ pub struct Config {
 
     /// Markdown整形のホットキー
     pub hotkey_format: String,
+
+    /// クリップボード履歴のホットキー
+    pub hotkey_clipboard_history: String,
 }
 
 impl Default for Config {
@@ -80,6 +83,7 @@ impl Default for Config {
             hotkey_popup: "ctrl+shift+t".to_string(),
             hotkey_selected: "ctrl+shift+y".to_string(),
             hotkey_format: "ctrl+shift+f".to_string(),
+            hotkey_clipboard_history: "ctrl+shift+v".to_string(),
         }
     }
 }

@@ -24,6 +24,8 @@ use std::process::Command;
 use std::thread;
 
 use crate::clipboard;
+use crate::clipboard_history;
+use crate::clipboard_ui;
 use crate::config::Config;
 use crate::formatter;
 use crate::notification;
@@ -270,25 +272,32 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // --- クリップボード履歴監視を開始 ---
+    let clipboard_store = clipboard_history::start_monitoring();
+
     // --- メニューの作成 ---
     let menu = Menu::new();
     let popup_label = format!("翻訳ポップアップ ({})", config.hotkey_popup);
     let selected_label = format!("選択テキスト翻訳 ({})", config.hotkey_selected);
     let format_label = format!("Markdown整形 ({})", config.hotkey_format);
+    let history_label = format!("クリップボード履歴 ({})", config.hotkey_clipboard_history);
 
     let item_popup = MenuItem::new(&popup_label, true, None);
     let item_selected = MenuItem::new(&selected_label, true, None);
     let item_format = MenuItem::new(&format_label, true, None);
+    let item_history = MenuItem::new(&history_label, true, None);
     let item_quit = MenuItem::new("終了", true, None);
 
     menu.append(&item_popup)?;
     menu.append(&item_selected)?;
     menu.append(&item_format)?;
+    menu.append(&item_history)?;
     menu.append(&item_quit)?;
 
     let item_popup_id = item_popup.id().clone();
     let item_selected_id = item_selected.id().clone();
     let item_format_id = item_format.id().clone();
+    let item_history_id = item_history.id().clone();
     let item_quit_id = item_quit.id().clone();
 
     // --- トレイアイコンの作成 ---
@@ -304,6 +313,7 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let default_popup = "ctrl+shift+t".to_string();
     let default_selected = "ctrl+shift+y".to_string();
     let default_format = "ctrl+shift+f".to_string();
+    let default_history = "ctrl+shift+v".to_string();
 
     let popup_spec = if config.hotkey_popup.trim().is_empty() {
         default_popup.as_str()
@@ -320,6 +330,11 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     } else {
         config.hotkey_format.as_str()
     };
+    let history_spec = if config.hotkey_clipboard_history.trim().is_empty() {
+        default_history.as_str()
+    } else {
+        config.hotkey_clipboard_history.as_str()
+    };
 
     let hk_popup = parse_hotkey(popup_spec)
         .or_else(|| parse_hotkey(&default_popup))
@@ -330,6 +345,9 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let hk_format = parse_hotkey(format_spec)
         .or_else(|| parse_hotkey(&default_format))
         .ok_or_else(|| format!("Markdown整形ホットキーの形式が不正です: {}", format_spec))?;
+    let hk_history = parse_hotkey(history_spec)
+        .or_else(|| parse_hotkey(&default_history))
+        .ok_or_else(|| format!("クリップボード履歴ホットキーの形式が不正です: {}", history_spec))?;
 
     // ホットキー登録（競合時はスキップして警告）
     let popup_registered = match hotkey_manager.register(hk_popup) {
@@ -353,8 +371,15 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
             false
         }
     };
+    let history_registered = match hotkey_manager.register(hk_history) {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("  ⚠ {} の登録に失敗（他アプリと競合の可能性）: {}", history_spec, e);
+            false
+        }
+    };
 
-    if !popup_registered && !selected_registered && !format_registered {
+    if !popup_registered && !selected_registered && !format_registered && !history_registered {
         return Err("全てのホットキーの登録に失敗しました。他のアプリ（quick_translate.ahk 等）を終了してから再起動してください".into());
     }
 
@@ -368,6 +393,10 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     if format_registered {
         println!("  {}: 選択テキストをMarkdown整形", format_spec);
     }
+    if history_registered {
+        println!("  {}: クリップボード履歴を開く", history_spec);
+    }
+    println!("  📋 クリップボード監視: 有効（最大7日間保持）");
 
     // Markdown整形バックエンドの検出
     let backend = formatter::detect_backend();
@@ -400,6 +429,8 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let mut last_selected_hotkey_time =
         std::time::Instant::now() - std::time::Duration::from_secs(10);
     let mut last_format_hotkey_time =
+        std::time::Instant::now() - std::time::Duration::from_secs(10);
+    let mut last_history_hotkey_time =
         std::time::Instant::now() - std::time::Duration::from_secs(10);
 
     // --- Windows メッセージループ ---
@@ -440,6 +471,18 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
                     }
                     last_format_hotkey_time = std::time::Instant::now();
                     handle_markdown_format(config);
+                } else if event.id == hk_history.id() {
+                    if last_history_hotkey_time.elapsed().as_millis() < 500 {
+                        continue;
+                    }
+                    last_history_hotkey_time = std::time::Instant::now();
+                    // 別プロセスとして履歴UIを起動
+                    let store_clone = clipboard_store.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = clipboard_ui::show_clipboard_history(store_clone) {
+                            eprintln!("[clipboard_history] UI起動に失敗: {}", e);
+                        }
+                    });
                 }
             }
 
@@ -451,6 +494,13 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
                     handle_selected_translation();
                 } else if event.id == item_format_id {
                     handle_markdown_format(config);
+                } else if event.id == item_history_id {
+                    let store_clone = clipboard_store.clone();
+                    thread::spawn(move || {
+                        if let Err(e) = clipboard_ui::show_clipboard_history(store_clone) {
+                            eprintln!("[clipboard_history] UI起動に失敗: {}", e);
+                        }
+                    });
                 } else if event.id == item_quit_id {
                     return Ok(());
                 }
