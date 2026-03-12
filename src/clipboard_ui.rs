@@ -4,6 +4,7 @@
 // - egui ポップアップで履歴を表示（検索窓 + ページャー付きリスト）
 // - キーワード検索（テキスト内容 + 日付）
 // - 100件ごとのページャー（「...see more」で次のページ）
+// - 上下キーでエントリ選択、Enterでコピー&閉じる
 // - エントリ選択でクリップボードにコピー & ウィンドウを閉じる
 
 use eframe::egui;
@@ -33,6 +34,8 @@ pub struct ClipboardHistoryPopup {
     created_at: Instant,
     /// 選択されたエントリのID（コピー用）
     selected_entry_id: Option<String>,
+    /// キーボード選択中のインデックス（-1 = 未選択 / 検索窓にフォーカス）
+    selected_index: i32,
 }
 
 impl ClipboardHistoryPopup {
@@ -48,6 +51,7 @@ impl ClipboardHistoryPopup {
             had_focus: false,
             created_at: Instant::now(),
             selected_entry_id: None,
+            selected_index: -1,
         };
         popup.refresh_results();
         popup
@@ -94,6 +98,37 @@ impl ClipboardHistoryPopup {
             }
         }
     }
+
+    /// キーボードナビゲーション処理。戻り値: true = ウィンドウを閉じる
+    fn handle_keyboard_navigation(&mut self, ctx: &egui::Context) -> bool {
+        let entry_count = self.display_entries.len() as i32;
+
+        // ↓キー: 次のエントリへ
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if self.selected_index < entry_count - 1 {
+                self.selected_index += 1;
+            }
+            return false;
+        }
+
+        // ↑キー: 前のエントリへ（-1 = 検索窓に戻る）
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if self.selected_index > -1 {
+                self.selected_index -= 1;
+            }
+            return false;
+        }
+
+        // Enter キー: 選択中のエントリをコピーして閉じる
+        if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+            if self.selected_index >= 0 && (self.selected_index as usize) < self.display_entries.len() {
+                self.selected_entry_id = Some(self.display_entries[self.selected_index as usize].id.clone());
+            }
+            return false;
+        }
+
+        false
+    }
 }
 
 impl eframe::App for ClipboardHistoryPopup {
@@ -113,6 +148,12 @@ impl eframe::App for ClipboardHistoryPopup {
             return;
         }
 
+        // キーボードナビゲーション
+        if self.handle_keyboard_navigation(ctx) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
         // エントリ選択後の処理
         if let Some(ref id) = self.selected_entry_id.take() {
             if let Some(entry) = self.display_entries.iter().find(|e| &e.id == id) {
@@ -125,6 +166,7 @@ impl eframe::App for ClipboardHistoryPopup {
         // 検索結果の更新
         if self.search_dirty {
             self.current_page = 0;
+            self.selected_index = -1; // 検索変更時にリセット
             self.refresh_results();
         }
 
@@ -138,6 +180,8 @@ impl eframe::App for ClipboardHistoryPopup {
         let image_entry_color = egui::Color32::from_rgb(148, 226, 213);
         let border_color = egui::Color32::from_rgb(69, 71, 90);
         let hover_color = egui::Color32::from_rgb(49, 50, 68);
+        let selected_color = egui::Color32::from_rgb(69, 71, 90);
+        let selected_border_color = accent_color;
 
         egui::CentralPanel::default()
             .frame(
@@ -174,7 +218,7 @@ impl eframe::App for ClipboardHistoryPopup {
                         .font(egui::TextStyle::Body)
                         .text_color(fg_color)
                         .hint_text(
-                            egui::RichText::new("🔍 検索 (キーワード / YYYY-MM-DD)...")
+                            egui::RichText::new("🔍 検索 (キーワード / YYYY-MM-DD / ↑↓で選択 / Enterで貼付)")
                                 .color(hint_color),
                         ),
                 );
@@ -211,10 +255,14 @@ impl eframe::App for ClipboardHistoryPopup {
                 ui.add_space(4.0);
 
                 // スクロールエリア
+                let scroll_to_index = self.selected_index;
+
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .show(ui, |ui| {
-                        for entry in &self.display_entries {
+                        for (i, entry) in self.display_entries.iter().enumerate() {
+                            let is_selected = self.selected_index == i as i32;
+
                             let (type_icon, type_color) = match entry.entry_type {
                                 EntryType::Text => ("T", text_entry_color),
                                 EntryType::Json => ("J", json_entry_color),
@@ -226,16 +274,21 @@ impl eframe::App for ClipboardHistoryPopup {
                             // エントリ行（クリック可能）
                             let response = ui
                                 .horizontal(|ui| {
+                                    // 選択インジケーター
+                                    if is_selected {
+                                        ui.colored_label(
+                                            accent_color,
+                                            egui::RichText::new("▸").size(12.0),
+                                        );
+                                    } else {
+                                        ui.add_space(14.0);
+                                    }
+
                                     // 種別バッジ
                                     let badge = egui::RichText::new(type_icon)
                                         .size(10.0)
                                         .color(egui::Color32::from_rgb(30, 30, 46))
                                         .strong();
-
-                                    let badge_rect = ui.available_rect_before_wrap();
-                                    let badge_pos = badge_rect.left_top();
-                                    let _ = badge_pos;
-
                                     ui.colored_label(type_color, badge);
                                     ui.add_space(4.0);
 
@@ -256,15 +309,32 @@ impl eframe::App for ClipboardHistoryPopup {
                                     } else {
                                         entry.preview.clone()
                                     };
-                                    ui.colored_label(
-                                        fg_color,
-                                        egui::RichText::new(preview).size(12.0),
-                                    );
+
+                                    // 選択中は太字で表示
+                                    let text = if is_selected {
+                                        egui::RichText::new(preview).size(12.0).strong().color(fg_color)
+                                    } else {
+                                        egui::RichText::new(preview).size(12.0).color(fg_color)
+                                    };
+                                    ui.label(text);
                                 })
                                 .response;
 
-                            // ホバー時の背景
-                            if response.hovered() {
+                            // 選択中 or ホバー時の背景
+                            if is_selected {
+                                // 選択行: 強調背景 + 左ボーダー
+                                ui.painter().rect_filled(
+                                    response.rect,
+                                    2.0,
+                                    selected_color,
+                                );
+                                // 左側にアクセントカラーのバー
+                                let bar_rect = egui::Rect::from_min_size(
+                                    response.rect.left_top(),
+                                    egui::vec2(3.0, response.rect.height()),
+                                );
+                                ui.painter().rect_filled(bar_rect, 1.0, selected_border_color);
+                            } else if response.hovered() {
                                 ui.painter().rect_filled(
                                     response.rect,
                                     2.0,
@@ -272,7 +342,7 @@ impl eframe::App for ClipboardHistoryPopup {
                                 );
                             }
 
-                            // クリックでコピー
+                            // クリックで選択 → コピー
                             if response.clicked() {
                                 self.selected_entry_id = Some(entry.id.clone());
                             }
@@ -285,6 +355,11 @@ impl eframe::App for ClipboardHistoryPopup {
                                 ],
                                 egui::Stroke::new(0.5, border_color),
                             );
+
+                            // キーボード選択時に自動スクロール
+                            if is_selected && scroll_to_index >= 0 {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
                         }
 
                         // ページャー: 「...see more」
