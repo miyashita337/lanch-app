@@ -507,8 +507,6 @@ mod tests {
     fn test_encode_rgba_to_png_contains_ihdr_idat_iend() {
         let rgba = vec![0u8; 4]; // 1x1
         let png = encode_rgba_to_png(&rgba, 1, 1).unwrap();
-        let png_str = String::from_utf8_lossy(&png);
-
         // チャンクタイプが含まれているか確認
         assert!(png.windows(4).any(|w| w == b"IHDR"));
         assert!(png.windows(4).any(|w| w == b"IDAT"));
@@ -532,6 +530,6 @@ mod tests {
 
         if let Ok(s) = clone2.lock() {
             assert_eq!(s.len(), 1);
-        }
+        };
     }
 }

@@ -384,7 +384,6 @@ fn format_bytes(bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
     // --- ヘルパー関数のテスト ---
 
