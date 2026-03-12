@@ -1,0 +1,21 @@
+name: Create ClipboardHistory Issue
+on:
+  workflow_dispatch:
+
+jobs:
+  create-issue:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create Issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "feat: ClipboardHistory - Alfred風クリップボード履歴機能" \
+            --label "enhancement" \
+            --body-file .github/ISSUE_TEMPLATES/clipboard-history.md
+      - name: Cleanup workflow
+        run: echo "Issue created successfully"
