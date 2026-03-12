@@ -166,6 +166,7 @@ impl ClipboardStore {
     }
 
     /// ストレージディレクトリのパスを返す
+    #[allow(dead_code)]
     pub fn store_dir(&self) -> &PathBuf {
         &self.store_dir
     }
