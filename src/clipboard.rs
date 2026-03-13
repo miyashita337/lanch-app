@@ -344,6 +344,35 @@ fn send_key(_key: u8) -> bool {
     false
 }
 
+/// 指定ウィンドウにフォーカスを戻してCtrl+Vをシミュレートする
+#[cfg(windows)]
+pub fn restore_focus_and_paste(hwnd: isize) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+
+    unsafe {
+        SetForegroundWindow(hwnd as _);
+    }
+    thread::sleep(Duration::from_millis(100));
+    let _ = send_ctrl_combo(VK_V);
+}
+
+#[cfg(not(windows))]
+pub fn restore_focus_and_paste(_hwnd: isize) {}
+
+/// 現在のフォアグラウンドウィンドウのハンドルを取得する
+#[cfg(windows)]
+pub fn get_foreground_hwnd() -> isize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    unsafe { GetForegroundWindow() as isize }
+}
+
+#[cfg(not(windows))]
+pub fn get_foreground_hwnd() -> isize {
+    0
+}
+
+const VK_V: u8 = 0x56;
+
 /// 選択テキストをコピーしてクリップボードから読み取る
 ///
 /// 1. 既存クリップボードを保存

@@ -10,8 +10,11 @@
 
 use eframe::egui;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::clipboard;
 use crate::clipboard_history::SharedStore;
 use crate::clipboard_store::{ClipboardEntry, EntryType};
 
@@ -43,10 +46,12 @@ pub struct ClipboardHistoryPopup {
     selected_index: i32,
     /// 画像テクスチャのキャッシュ (blob_file名 → TextureHandle)
     image_cache: HashMap<String, egui::TextureHandle>,
+    /// エントリ選択によるペーストが必要か（ウィンドウ終了後に参照）
+    paste_after_close: Arc<AtomicBool>,
 }
 
 impl ClipboardHistoryPopup {
-    pub fn new(store: SharedStore) -> Self {
+    pub fn new(store: SharedStore, paste_after_close: Arc<AtomicBool>) -> Self {
         let mut popup = Self {
             store,
             search_query: String::new(),
@@ -60,6 +65,7 @@ impl ClipboardHistoryPopup {
             selected_entry_id: None,
             selected_index: -1,
             image_cache: HashMap::new(),
+            paste_after_close,
         };
         popup.refresh_results();
         popup
@@ -93,13 +99,19 @@ impl ClipboardHistoryPopup {
                 if let Some(ref blob_file) = entry.blob_file {
                     if let Ok(store) = self.store.lock() {
                         let path = store.blob_path(blob_file);
-                        if let Ok(data) = std::fs::read(&path) {
-                            // PNG → arboard::ImageData への変換は複雑なので
-                            // ファイルパスをテキストとしてコピー（暫定）
-                            if let Ok(mut cb) = arboard::Clipboard::new() {
-                                let _ = cb.set_text(path.to_string_lossy().as_ref());
+                        if let Ok(png_data) = std::fs::read(&path) {
+                            if let Ok(img) = image::load_from_memory_with_format(&png_data, image::ImageFormat::Png) {
+                                let rgba = img.to_rgba8();
+                                let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+                                let img_data = arboard::ImageData {
+                                    width: w,
+                                    height: h,
+                                    bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+                                };
+                                if let Ok(mut cb) = arboard::Clipboard::new() {
+                                    let _ = cb.set_image(img_data);
+                                }
                             }
-                            let _ = data; // suppress warning
                         }
                     }
                 }
@@ -337,10 +349,11 @@ impl eframe::App for ClipboardHistoryPopup {
             return;
         }
 
-        // エントリ選択後の処理
+        // エントリ選択後の処理: コピー → ウィンドウ閉じる → フォーカス復元 & ペースト
         if let Some(ref id) = self.selected_entry_id.take() {
             if let Some(entry) = self.display_entries.iter().find(|e| &e.id == id) {
                 self.copy_entry_to_clipboard(entry);
+                self.paste_after_close.store(true, Ordering::SeqCst);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
@@ -441,15 +454,18 @@ impl eframe::App for ClipboardHistoryPopup {
 
                 // ===== 水平分割レイアウト: リスト(左) | 詳細パネル(右) =====
                 let available_width = ui.available_width();
+                let available_height = ui.available_height();
                 let list_width = available_width * 0.45; // 左45%
-                let _detail_width = available_width * 0.55; // 右55%
 
                 let scroll_to_index = self.selected_index;
 
                 ui.horizontal(|ui| {
+                    ui.set_min_height(available_height);
+
                     // --- 左パネル: エントリリスト ---
                     ui.vertical(|ui| {
                         ui.set_width(list_width);
+                        ui.set_min_height(available_height);
 
                         egui::ScrollArea::vertical()
                             .id_salt("entry_list")
@@ -626,6 +642,7 @@ impl eframe::App for ClipboardHistoryPopup {
 
                     // --- 右パネル: 詳細表示 ---
                     ui.vertical(|ui| {
+                        ui.set_min_height(available_height);
                         self.render_detail_panel(ui, ctx);
                     });
                 });
@@ -638,6 +655,11 @@ impl eframe::App for ClipboardHistoryPopup {
 
 /// クリップボード履歴ポップアップを表示する
 pub fn show_clipboard_history(store: SharedStore) -> Result<(), Box<dyn std::error::Error>> {
+    // ポップアップ起動前のフォアグラウンドウィンドウを記憶
+    let previous_hwnd = clipboard::get_foreground_hwnd();
+    let paste_flag = Arc::new(AtomicBool::new(false));
+    let paste_flag_clone = paste_flag.clone();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1100.0, 600.0])
@@ -658,9 +680,14 @@ pub fn show_clipboard_history(store: SharedStore) -> Result<(), Box<dyn std::err
         options,
         Box::new(move |cc| {
             setup_japanese_fonts(&cc.egui_ctx);
-            Ok(Box::new(ClipboardHistoryPopup::new(store)) as Box<dyn eframe::App>)
+            Ok(Box::new(ClipboardHistoryPopup::new(store, paste_flag_clone)) as Box<dyn eframe::App>)
         }),
     )?;
+
+    // ウィンドウ終了後: エントリ選択があった場合は元ウィンドウにフォーカスを戻してペースト
+    if paste_flag.load(Ordering::SeqCst) && previous_hwnd != 0 {
+        clipboard::restore_focus_and_paste(previous_hwnd);
+    }
 
     Ok(())
 }
