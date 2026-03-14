@@ -77,7 +77,12 @@ fn run_clipboard_monitor(store: SharedStore) {
         if msg == WM_CLIPBOARDUPDATE {
             THREAD_STORE.with(|cell| {
                 if let Some(ref store) = *cell.borrow() {
-                    on_clipboard_update(store);
+                    // パニックでアプリ全体が落ちないよう保護
+                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        on_clipboard_update(store);
+                    })) {
+                        eprintln!("[clipboard_history] クリップボード処理中にパニック: {:?}", e);
+                    }
                 }
             });
             return 0;

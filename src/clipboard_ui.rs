@@ -292,9 +292,15 @@ impl ClipboardHistoryPopup {
                         // 画像サムネイルを表示
                         if let Some(ref blob_file) = entry.blob_file {
                             let blob_key = blob_file.clone();
-                            if let Some(texture) = self.load_image_texture(ctx, &blob_key) {
+                            let available = ui.available_size();
+                            // 表示領域が小さすぎる場合はスキップ（負サイズパニック防止）
+                            if available.x < 10.0 || available.y < 10.0 {
+                                ui.colored_label(
+                                    hint_color,
+                                    egui::RichText::new("(表示領域が小さすぎます)").size(12.0),
+                                );
+                            } else if let Some(texture) = self.load_image_texture(ctx, &blob_key) {
                                 let tex_size = texture.size_vec2();
-                                let available = ui.available_size();
                                 let (dw, dh) = calculate_image_display_size(
                                     tex_size.x, tex_size.y, available.x, available.y,
                                 );
@@ -304,7 +310,7 @@ impl ClipboardHistoryPopup {
                                     .show(ui, |ui| {
                                         ui.image(egui::load::SizedTexture::new(
                                             texture.id(),
-                                            egui::vec2(dw, dh),
+                                            egui::vec2(dw.max(1.0), dh.max(1.0)),
                                         ));
                                     });
                             } else {
