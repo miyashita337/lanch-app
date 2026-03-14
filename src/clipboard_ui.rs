@@ -292,9 +292,15 @@ impl ClipboardHistoryPopup {
                         // 画像サムネイルを表示
                         if let Some(ref blob_file) = entry.blob_file {
                             let blob_key = blob_file.clone();
-                            if let Some(texture) = self.load_image_texture(ctx, &blob_key) {
+                            let available = ui.available_size();
+                            // 表示領域が小さすぎる場合はスキップ（負サイズパニック防止）
+                            if available.x < 10.0 || available.y < 10.0 {
+                                ui.colored_label(
+                                    hint_color,
+                                    egui::RichText::new("(表示領域が小さすぎます)").size(12.0),
+                                );
+                            } else if let Some(texture) = self.load_image_texture(ctx, &blob_key) {
                                 let tex_size = texture.size_vec2();
-                                let available = ui.available_size();
                                 let (dw, dh) = calculate_image_display_size(
                                     tex_size.x, tex_size.y, available.x, available.y,
                                 );
@@ -304,7 +310,7 @@ impl ClipboardHistoryPopup {
                                     .show(ui, |ui| {
                                         ui.image(egui::load::SizedTexture::new(
                                             texture.id(),
-                                            egui::vec2(dw, dh),
+                                            egui::vec2(dw.max(1.0), dh.max(1.0)),
                                         ));
                                     });
                             } else {
@@ -459,7 +465,9 @@ impl eframe::App for ClipboardHistoryPopup {
 
                 let scroll_to_index = self.selected_index;
 
-                ui.horizontal(|ui| {
+                let remaining_rect = ui.available_rect_before_wrap();
+                ui.allocate_ui_at_rect(remaining_rect, |ui| {
+                  ui.horizontal(|ui| {
                     ui.set_min_height(available_height);
 
                     // --- 左パネル: エントリリスト ---
@@ -470,6 +478,7 @@ impl eframe::App for ClipboardHistoryPopup {
                         egui::ScrollArea::vertical()
                             .id_salt("entry_list")
                             .auto_shrink([false; 2])
+                            .max_height(available_height)
                             .show(ui, |ui| {
                                 for (i, entry) in self.display_entries.iter().enumerate() {
                                     let is_selected = self.selected_index == i as i32;
@@ -645,6 +654,7 @@ impl eframe::App for ClipboardHistoryPopup {
                         ui.set_min_height(available_height);
                         self.render_detail_panel(ui, ctx);
                     });
+                });
                 });
             });
 
