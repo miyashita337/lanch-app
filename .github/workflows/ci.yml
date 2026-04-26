@@ -6,26 +6,39 @@ on:
   pull_request:
     branches: [main]
 
+# 同一ブランチで in-flight があればキャンセル
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # lanch-app は Windows 専用デスクトップアプリ（winit::platform::windows、windows_sys を直接利用）
+    # Linux runner ではビルドが通らないため Windows runner を使う
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust toolchain (with llvm-tools)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
       - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libxdo-dev
-      - name: Check (allow warnings)
-        run: cargo check 2>&1 || true
-      - name: Run tests
-        run: cargo test 2>&1 || true
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
-      - name: Generate coverage
-        run: cargo tarpaulin --out xml --output-dir . --skip-clean 2>&1 || true
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests with coverage (codecov format)
+        run: cargo llvm-cov --workspace --codecov --output-path codecov.json
+
       - name: Upload coverage to Codecov
-        if: always()
         uses: codecov/codecov-action@v5
         with:
-          files: cobertura.xml
-          fail_ci_if_error: false
+          files: codecov.json
+          fail_ci_if_error: true
+          flags: unittests
+          name: lanch-app-coverage
