@@ -165,30 +165,32 @@ fn show_spinner_win32(done: Arc<AtomicBool>) {
     });
     SPINNER_ANGLE.with(|a| a.set(0.0));
 
-    unsafe {
+    // ウィンドウクラスはプロセス生存期間中に一度だけ登録すれば十分。
+    // 都度 RegisterClassW すると複数スピナー同時表示時にクラス名重複で失敗し、
+    // UnregisterClassW は他スレッドで実行中のスピナーに影響するため Once で一回限りにする。
+    static REGISTER_CLASS: std::sync::Once = std::sync::Once::new();
+    REGISTER_CLASS.call_once(|| unsafe {
         let h_instance = GetModuleHandleW(std::ptr::null());
 
-        // ウィンドウクラスはプロセス内で1度だけ登録する（Win32 の定石）。
-        // 毎回 register/unregister すると、並行スピナー間で登録競合が起きうる。
         // RegisterClassW は lpszClassName を内部コピーするため、ローカル Vec は登録後に破棄してよい。
-        static REGISTER_CLASS: std::sync::Once = std::sync::Once::new();
-        REGISTER_CLASS.call_once(|| {
-            let cn: Vec<u16> = "LanchSpinner\0".encode_utf16().collect();
-            let wc = WNDCLASSW {
-                style: CS_OWNDC,
-                lpfnWndProc: Some(wnd_proc),
-                cbClsExtra: 0,
-                cbWndExtra: 0,
-                hInstance: h_instance,
-                hIcon: std::ptr::null_mut(),
-                hCursor: std::ptr::null_mut(),
-                hbrBackground: std::ptr::null_mut(),
-                lpszMenuName: std::ptr::null(),
-                lpszClassName: cn.as_ptr(),
-            };
-            RegisterClassW(&wc);
-        });
+        let class_name: Vec<u16> = "LanchSpinner\0".encode_utf16().collect();
+        let wc = WNDCLASSW {
+            style: CS_OWNDC,
+            lpfnWndProc: Some(wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: h_instance,
+            hIcon: std::ptr::null_mut(),
+            hCursor: std::ptr::null_mut(),
+            hbrBackground: std::ptr::null_mut(),
+            lpszMenuName: std::ptr::null(),
+            lpszClassName: class_name.as_ptr(),
+        };
+        RegisterClassW(&wc);
+    });
 
+    unsafe {
+        let h_instance = GetModuleHandleW(std::ptr::null());
         let class_name: Vec<u16> = "LanchSpinner\0".encode_utf16().collect();
 
         // カーソル位置に配置
@@ -222,7 +224,16 @@ fn show_spinner_win32(done: Arc<AtomicBool>) {
         let rgn = CreateRoundRectRgn(0, 0, SPINNER_SIZE, SPINNER_SIZE, 8, 8);
         SetWindowRgn(hwnd, rgn, 1);
 
-        SetTimer(hwnd, TIMER_ID, FRAME_MS, None);
+        // WM_TIMER が唯一の再描画・終了経路。SetTimer が失敗すると最前面ウィンドウが
+        // 残り続けるため、失敗時はウィンドウを破棄して表示せず抜ける。
+        if SetTimer(hwnd, TIMER_ID, FRAME_MS, None) == 0 {
+            eprintln!("[spinner] SetTimer 失敗、スピナーを表示しません");
+            DestroyWindow(hwnd);
+            SPINNER_DONE.with(|cell| {
+                *cell.borrow_mut() = None;
+            });
+            return;
+        }
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 
         let mut msg: MSG = std::mem::zeroed();
@@ -231,6 +242,11 @@ fn show_spinner_win32(done: Arc<AtomicBool>) {
         }
         // UnregisterClassW は呼ばない（クラスはプロセス存続中は再利用する）。
     }
+
+    // スレッドローカルに残った Arc<AtomicBool> をクリアして参照カウントのリークを防ぐ
+    SPINNER_DONE.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
 }
 
 /// 現在のカーソル位置を取得
