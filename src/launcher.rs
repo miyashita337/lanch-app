@@ -62,7 +62,7 @@ struct LauncherApp {
 
 impl LauncherApp {
     fn new(config: Config) -> Self {
-        let bookmarks = launcher_bookmarks::load_bookmarks();
+        let bookmarks = launcher_bookmarks::load_bookmarks(&config.launcher_bookmark_profiles);
         let apps = launcher_apps::scan_apps();
         let history = LauncherHistory::load();
 
