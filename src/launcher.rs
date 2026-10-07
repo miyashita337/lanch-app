@@ -20,6 +20,7 @@ use crate::launcher_apps::{self, AppEntry};
 use crate::launcher_bookmarks::{self, BookmarkEntry};
 use crate::launcher_calc;
 use crate::launcher_history::LauncherHistory;
+use crate::notification;
 
 /// 候補アイテム
 #[derive(Clone)]
@@ -281,11 +282,14 @@ impl LauncherApp {
         // アクション実行
         match &candidate.action {
             CandidateAction::RunCommand { command, args } => {
-                let _ = std::process::Command::new(command).args(args).spawn();
+                if let Err(e) = std::process::Command::new(command).args(args).spawn() {
+                    report_failure(&format_spawn_failure(command, args, &e));
+                }
             }
             CandidateAction::CopyText(text) => {
-                if let Ok(mut cb) = arboard::Clipboard::new() {
-                    let _ = cb.set_text(text);
+                let result = arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text));
+                if let Err(e) = result {
+                    report_failure(&format!("クリップボードへのコピーに失敗しました: {}", e));
                 }
             }
             CandidateAction::OpenUrl(url) | CandidateAction::OpenBookmark(url) => {
@@ -524,8 +528,24 @@ fn open_url(url: &str) {
     // クエリ付き URL の破損やコマンド注入につながる。ShellExecute 相当を安全に扱う
     // `open` crate に委ねる（Windows/macOS/Linux を横断で正しく処理）。
     if let Err(e) = open::that(url) {
-        eprintln!("[launcher] URL を開けませんでした ({}): {}", url, e);
+        report_failure(&format!("URL を開けませんでした ({}): {}", url, e));
     }
+}
+
+/// 起動失敗を示すメッセージを組み立てる（何をどう起動しようとして何のエラーか）
+fn format_spawn_failure(command: &str, args: &[String], err: &std::io::Error) -> String {
+    let full = if args.is_empty() {
+        command.to_string()
+    } else {
+        format!("{} {}", command, args.join(" "))
+    };
+    format!("コマンドを起動できませんでした ({}): {}", full, err)
+}
+
+/// GUI アプリは stderr が見えないため、ログ（stderr はログファイルへ）とトレイ通知の両方に出す
+fn report_failure(message: &str) {
+    eprintln!("[launcher] {}", message);
+    notification::show_error("lanch-app", message);
 }
 
 fn urlencoded(s: &str) -> String {
@@ -589,6 +609,22 @@ fn setup_japanese_fonts(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_format_spawn_failure_includes_command_args_and_error() {
+        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
+        let args = vec!["--flag".to_string(), "x".to_string()];
+        let msg = format_spawn_failure("foo.exe", &args, &err);
+        assert!(msg.contains("foo.exe --flag x"));
+        assert!(msg.contains("not found"));
+    }
+
+    #[test]
+    fn test_format_spawn_failure_without_args() {
+        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "nope");
+        let msg = format_spawn_failure("foo.exe", &[], &err);
+        assert!(msg.contains("(foo.exe)"));
+    }
 
     #[test]
     fn test_looks_like_url_scheme() {
