@@ -138,6 +138,29 @@ fn handle_selected_translation() {
     spawn_self(&["--popup"]);
 }
 
+/// 整形処理が実行中かどうか（連打で重い claude プロセスを多重起動させないための排他フラグ）
+static FORMAT_IN_PROGRESS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// FORMAT_IN_PROGRESS を drop 時に必ず解除する RAII ガード。
+/// 早期 return・ワーカースレッド完了のどの経路でも取りこぼさず解除する。
+struct FormatGuard;
+impl Drop for FormatGuard {
+    fn drop(&mut self) {
+        FORMAT_IN_PROGRESS.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// done フラグを drop 時に必ず true にする RAII ガード。
+/// ワーカースレッドが panic・早期 return しても確実にスピナーを終了させ、
+/// スピナースレッドのリーク（SPINNER_ACTIVE が立ちっぱなし）を防ぐ。
+struct DoneGuard(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl Drop for DoneGuard {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// 選択テキストをMarkdown整形する（サイレントモード）
 ///
 /// 1. Ctrl+C シミュレーション → クリップボードから読み取り
@@ -145,6 +168,16 @@ fn handle_selected_translation() {
 /// 3. 結果をクリップボードにコピー
 /// 4. トースト通知のみ表示（ポップアップなし）
 fn handle_markdown_format(config: &Config) {
+    // 既に整形中なら無視する。claude CLI は 5〜7 秒かかる重いプロセスで、
+    // 連打すると多重起動して IO/CPU が詰まるため、常に 1 つだけに制限する。
+    if FORMAT_IN_PROGRESS.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        eprintln!("[format] 既に整形処理中のためスキップ");
+        return;
+    }
+    // 以降のどの return でも drop で FORMAT_IN_PROGRESS を解除する。
+    // ワーカースレッド起動時はこのガードをスレッドへ move し、整形完了まで保持する。
+    let guard = FormatGuard;
+
     let text = match clipboard::copy_selected_text() {
         Some(t) => t,
         None => {
@@ -167,13 +200,16 @@ fn handle_markdown_format(config: &Config) {
 
     // ワーカースレッド: 整形処理
     thread::spawn(move || {
+        // 整形完了（成功/失敗いずれも）まで排他フラグを保持し、スレッド終了時に解除する
+        let _guard = guard;
+        // panic・早期 return も含め、スレッド終了時に必ず done を true にしてスピナーを閉じる
+        let _done_guard = DoneGuard(done_for_work);
         eprintln!("[format] Markdown整形を開始...");
 
         match formatter::format_markdown(&text, &config) {
             Ok(result) => {
                 if result.formatted.is_empty() {
                     eprintln!("[format] 整形結果が空でした");
-                    done_for_work.store(true, std::sync::atomic::Ordering::SeqCst);
                     return;
                 }
 
@@ -186,7 +222,6 @@ fn handle_markdown_format(config: &Config) {
                                 "Lanch App",
                                 "クリップボードへのコピーに失敗しました",
                             );
-                            done_for_work.store(true, std::sync::atomic::Ordering::SeqCst);
                             return;
                         }
                         eprintln!("[format] Markdown整形完了 → クリップボードにコピーしました");
@@ -210,7 +245,6 @@ fn handle_markdown_format(config: &Config) {
                 notification::show_error("Lanch App", &msg);
             }
         }
-        done_for_work.store(true, std::sync::atomic::Ordering::SeqCst);
     });
 
     // スピナースレッド: 処理中インジケーター表示

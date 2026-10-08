@@ -11,6 +11,9 @@ use std::sync::Arc;
 /// スピナーウィンドウのサイズ
 const SPINNER_SIZE: i32 = 40;
 
+/// スピナーが1つ稼働中かどうか（同時に複数ウィンドウを作らせないためのプロセスグローバルガード）
+static SPINNER_ACTIVE: AtomicBool = AtomicBool::new(false);
+
 /// スピナーを表示する（別スレッドから呼ぶ）。done が true になると自動で閉じる。
 pub fn show_spinner(done: Arc<AtomicBool>) {
     #[cfg(windows)]
@@ -139,6 +142,24 @@ fn show_spinner_win32(done: Arc<AtomicBool>) {
         }
     }
 
+    // 同時に複数のスピナーウィンドウを作らせない。
+    // ホットキーの二重発火等で複数スレッドが同時に同名ウィンドウクラスを登録/解除すると
+    // ヒープ破損(0xc0000374)でプロセスごとクラッシュする。稼働中なら2つ目はウィンドウを
+    // 作らず、完了フラグを待つだけにする。RAII ガードで異常終了時も必ずフラグを戻す。
+    if SPINNER_ACTIVE.swap(true, Ordering::SeqCst) {
+        while !done.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        return;
+    }
+    struct ActiveGuard;
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            SPINNER_ACTIVE.store(false, Ordering::SeqCst);
+        }
+    }
+    let _active = ActiveGuard;
+
     SPINNER_DONE.with(|cell| {
         *cell.borrow_mut() = Some(done);
     });
@@ -150,8 +171,9 @@ fn show_spinner_win32(done: Arc<AtomicBool>) {
     static REGISTER_CLASS: std::sync::Once = std::sync::Once::new();
     REGISTER_CLASS.call_once(|| unsafe {
         let h_instance = GetModuleHandleW(std::ptr::null());
-        let class_name: Vec<u16> = "LanchSpinner\0".encode_utf16().collect();
 
+        // RegisterClassW は lpszClassName を内部コピーするため、ローカル Vec は登録後に破棄してよい。
+        let class_name: Vec<u16> = "LanchSpinner\0".encode_utf16().collect();
         let wc = WNDCLASSW {
             style: CS_OWNDC,
             lpfnWndProc: Some(wnd_proc),
@@ -218,6 +240,7 @@ fn show_spinner_win32(done: Arc<AtomicBool>) {
         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
             DispatchMessageW(&msg);
         }
+        // UnregisterClassW は呼ばない（クラスはプロセス存続中は再利用する）。
     }
 
     // スレッドローカルに残った Arc<AtomicBool> をクリアして参照カウントのリークを防ぐ
