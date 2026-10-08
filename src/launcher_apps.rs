@@ -125,7 +125,10 @@ pub fn load_cached_store_apps() -> Vec<AppEntry> {
         return Vec::new();
     };
     parse_start_apps(&json).unwrap_or_else(|e| {
-        eprintln!("[launcher_apps] Store アプリのキャッシュを読めません: {}", e);
+        eprintln!(
+            "[launcher_apps] Store アプリのキャッシュを読めません: {}",
+            e
+        );
         Vec::new()
     })
 }
@@ -144,15 +147,30 @@ pub fn spawn_store_refresh() -> Receiver<Vec<AppEntry>> {
         };
         match parse_start_apps(&json) {
             Ok(apps) => {
-                if let Err(e) = std::fs::write(store_cache_path(), &json) {
+                if let Err(e) = write_atomically(&store_cache_path(), &json) {
                     eprintln!("[launcher_apps] Store アプリのキャッシュ保存に失敗: {}", e);
                 }
                 let _ = tx.send(apps);
             }
-            Err(e) => eprintln!("[launcher_apps] Get-StartApps の出力を解析できません: {}", e),
+            Err(e) => eprintln!(
+                "[launcher_apps] Get-StartApps の出力を解析できません: {}",
+                e
+            ),
         }
     });
     rx
+}
+
+/// 同じディレクトリの一時ファイルに書いてから rename で置き換える。
+/// ランチャーは開くたびに別プロセスで起動するため、書き込み途中のキャッシュを
+/// 他のプロセスが読んだり、終了で中途半端な JSON が残ったりするのを防ぐ。
+/// std::fs::rename は Windows では MoveFileExW(MOVEFILE_REPLACE_EXISTING) で既存ファイルを置き換える。
+fn write_atomically(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 fn store_cache_path() -> PathBuf {
@@ -321,6 +339,27 @@ fn scan_dir(dir: &PathBuf, out: &mut Vec<AppEntry>, depth: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_write_atomically_replaces_existing_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("store-apps.json");
+        std::fs::write(&path, "old").expect("seed");
+
+        write_atomically(&path, "new").expect("write");
+
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "new");
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() != "store-apps.json")
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "一時ファイルが残っている: {:?}",
+            leftovers
+        );
+    }
 
     fn sample_apps() -> Vec<AppEntry> {
         vec![
