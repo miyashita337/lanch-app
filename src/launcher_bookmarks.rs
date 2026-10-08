@@ -5,7 +5,7 @@
 
 use serde::Deserialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// ブックマークエントリ
 #[derive(Debug, Clone)]
@@ -31,23 +31,85 @@ struct BookmarkNode {
     children: Option<Vec<BookmarkNode>>,
 }
 
+/// 走査結果（読み込めたエントリと、読めなかったファイルの内訳）
+#[derive(Debug, Default)]
+struct ScanResult {
+    entries: Vec<BookmarkEntry>,
+    /// ファイルが存在しない（Chrome 未使用・未作成プロファイルなど。正常ケースもある）
+    missing: Vec<PathBuf>,
+    /// 存在するが読めない・JSON が壊れている（警告対象）
+    failed: Vec<(PathBuf, String)>,
+}
+
 /// Chrome ブックマークを読み込む
-pub fn load_bookmarks() -> Vec<BookmarkEntry> {
-    let mut entries = Vec::new();
-    for path in bookmark_paths() {
-        if let Ok(content) = fs::read_to_string(&path) {
-            if let Ok(file) = serde_json::from_str::<BookmarksFile>(&content) {
-                for node in file.roots.values() {
-                    flatten_bookmarks(node, &mut entries);
+///
+/// `profiles` が空なら Default と Profile 1〜5 を走査する。
+/// 読み込みに失敗してもランチャーは継続し、原因を stderr（ログファイル）に残す。
+pub fn load_bookmarks(profiles: &[String]) -> Vec<BookmarkEntry> {
+    let Some(base) = chrome_user_data_dir() else {
+        eprintln!("[launcher] info: Chrome のユーザーデータ dir を特定できないためブックマークを読み込みません");
+        return Vec::new();
+    };
+    let result = scan_profiles(&base, profiles);
+    if !result.missing.is_empty() {
+        eprintln!(
+            "[launcher] info: Bookmarks ファイルなし（{} 件、Chrome 未使用または未作成プロファイル）: {}",
+            result.missing.len(),
+            join_paths(&result.missing)
+        );
+    }
+    for (path, reason) in &result.failed {
+        eprintln!(
+            "[launcher] warn: Bookmarks を読み込めません: {} ({})",
+            path.display(),
+            reason
+        );
+    }
+    result.entries
+}
+
+fn join_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// 走査対象のプロファイルディレクトリ名。空指定なら従来どおりの固定リスト
+fn profile_dir_names(profiles: &[String]) -> Vec<String> {
+    if profiles.is_empty() {
+        std::iter::once("Default".to_string())
+            .chain((1..=5).map(|i| format!("Profile {}", i)))
+            .collect()
+    } else {
+        profiles.to_vec()
+    }
+}
+
+/// `base` 配下の各プロファイルの Bookmarks を読み、プロファイル間の重複 URL を除去して返す
+fn scan_profiles(base: &Path, profiles: &[String]) -> ScanResult {
+    let mut result = ScanResult::default();
+    for name in profile_dir_names(profiles) {
+        let path = base.join(&name).join("Bookmarks");
+        match fs::read_to_string(&path) {
+            Ok(content) => match serde_json::from_str::<BookmarksFile>(&content) {
+                Ok(file) => {
+                    for node in file.roots.values() {
+                        flatten_bookmarks(node, &mut result.entries);
+                    }
                 }
-            }
+                Err(e) => result.failed.push((path, format!("JSON が不正: {}", e))),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => result.missing.push(path),
+            Err(e) => result.failed.push((path, format!("読み込みエラー: {}", e))),
         }
     }
     // 重複URL除去（挿入順を保ったまま、プロファイル間の重複も除去する）
     // dedup_by は隣接要素しか除去できないため HashSet で全体の重複を弾く
     let mut seen = std::collections::HashSet::new();
-    entries.retain(|e| seen.insert(e.url.clone()));
-    entries
+    result.entries.retain(|e| seen.insert(e.url.clone()));
+    result
 }
 
 /// ブックマークを部分一致検索（AND検索、名前優先スコアリング）
@@ -112,42 +174,22 @@ fn flatten_bookmarks(node: &BookmarkNode, out: &mut Vec<BookmarkEntry>) {
     }
 }
 
-fn bookmark_paths() -> Vec<PathBuf> {
-    let mut paths = Vec::new();
-
+fn chrome_user_data_dir() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-            let base = PathBuf::from(&local_app_data)
+        let local_app_data = std::env::var("LOCALAPPDATA").ok()?;
+        Some(
+            PathBuf::from(local_app_data)
                 .join("Google")
                 .join("Chrome")
-                .join("User Data");
-            // Default profile
-            let default = base.join("Default").join("Bookmarks");
-            if default.exists() {
-                paths.push(default);
-            }
-            // Numbered profiles
-            for i in 1..=5 {
-                let profile = base.join(format!("Profile {}", i)).join("Bookmarks");
-                if profile.exists() {
-                    paths.push(profile);
-                }
-            }
-        }
+                .join("User Data"),
+        )
     }
 
     #[cfg(not(windows))]
     {
-        if let Some(home) = dirs::home_dir() {
-            let default = home.join(".config/google-chrome/Default/Bookmarks");
-            if default.exists() {
-                paths.push(default);
-            }
-        }
+        dirs::home_dir().map(|home| home.join(".config/google-chrome"))
     }
-
-    paths
 }
 
 // =============================================================================
@@ -232,6 +274,85 @@ mod tests {
     #[test]
     fn test_load_bookmarks_no_crash() {
         // Chrome未インストール環境でもパニックしない
-        let _ = load_bookmarks();
+        let _ = load_bookmarks(&[]);
+    }
+
+    const VALID_JSON: &str = r#"{"roots":{"bookmark_bar":{"name":"bar","children":[
+        {"name":"Rust","url":"https://www.rust-lang.org"}]}}}"#;
+
+    fn write_profile(base: &Path, profile: &str, content: &str) {
+        let dir = base.join(profile);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("Bookmarks"), content).unwrap();
+    }
+
+    #[test]
+    fn test_profile_dir_names_empty_uses_fixed_list() {
+        let names = profile_dir_names(&[]);
+        assert_eq!(
+            names,
+            ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"]
+        );
+    }
+
+    #[test]
+    fn test_profile_dir_names_explicit() {
+        let names = profile_dir_names(&["Profile 9".to_string()]);
+        assert_eq!(names, ["Profile 9"]);
+    }
+
+    #[test]
+    fn test_scan_missing_file_is_reported_not_failed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = scan_profiles(tmp.path(), &[]);
+        assert!(r.entries.is_empty());
+        assert_eq!(r.missing.len(), 6);
+        assert!(r.failed.is_empty());
+    }
+
+    #[test]
+    fn test_scan_broken_json_is_failed_and_others_continue() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_profile(tmp.path(), "Default", "{ not json");
+        write_profile(tmp.path(), "Profile 1", VALID_JSON);
+        let r = scan_profiles(tmp.path(), &[]);
+        assert_eq!(r.failed.len(), 1);
+        assert!(r.failed[0].0.starts_with(tmp.path().join("Default")));
+        assert_eq!(r.entries.len(), 1);
+        assert_eq!(r.entries[0].url, "https://www.rust-lang.org");
+    }
+
+    #[test]
+    fn test_scan_unreadable_path_is_failed() {
+        // Bookmarks がディレクトリだと NotFound 以外の読み込みエラーになる
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("Default").join("Bookmarks")).unwrap();
+        let r = scan_profiles(tmp.path(), &["Default".to_string()]);
+        assert_eq!(r.failed.len(), 1);
+        assert!(r.missing.is_empty());
+    }
+
+    #[test]
+    fn test_scan_explicit_profiles_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_profile(tmp.path(), "Default", VALID_JSON);
+        write_profile(
+            tmp.path(),
+            "Work",
+            r#"{"roots":{"other":{"name":"o","children":[{"name":"GH","url":"https://github.com"}]}}}"#,
+        );
+        let r = scan_profiles(tmp.path(), &["Work".to_string()]);
+        assert_eq!(r.entries.len(), 1);
+        assert_eq!(r.entries[0].url, "https://github.com");
+        assert!(r.missing.is_empty() && r.failed.is_empty());
+    }
+
+    #[test]
+    fn test_scan_dedups_across_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_profile(tmp.path(), "Default", VALID_JSON);
+        write_profile(tmp.path(), "Profile 1", VALID_JSON);
+        let r = scan_profiles(tmp.path(), &[]);
+        assert_eq!(r.entries.len(), 1);
     }
 }
