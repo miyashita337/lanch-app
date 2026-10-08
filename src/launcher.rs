@@ -14,9 +14,10 @@
 //   8. Web検索フォールバック
 
 use eframe::egui;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 use crate::config::Config;
-use crate::launcher_apps::{self, AppEntry};
+use crate::launcher_apps::{self, AppEntry, AppTarget};
 use crate::launcher_bookmarks::{self, BookmarkEntry};
 use crate::launcher_calc;
 use crate::launcher_history::LauncherHistory;
@@ -57,13 +58,23 @@ struct LauncherApp {
     // プリロード済みデータ
     bookmarks: Vec<BookmarkEntry>,
     apps: Vec<AppEntry>,
+    /// .lnk のみの一覧（Store アプリの取得完了時に再統合するため保持）
+    lnk_apps: Vec<AppEntry>,
+    /// Store アプリ一覧のバックグラウンド取得結果
+    store_rx: Option<Receiver<Vec<AppEntry>>>,
     history: LauncherHistory,
 }
 
 impl LauncherApp {
     fn new(config: Config) -> Self {
         let bookmarks = launcher_bookmarks::load_bookmarks();
-        let apps = launcher_apps::scan_apps();
+        let lnk_apps = launcher_apps::scan_lnk_apps();
+        // 前回取得分をすぐ使い、最新の一覧はバックグラウンドで取得する
+        let apps = launcher_apps::merge_apps(
+            lnk_apps.clone(),
+            launcher_apps::load_cached_store_apps(),
+        );
+        let store_rx = Some(launcher_apps::spawn_store_refresh());
         let history = LauncherHistory::load();
 
         let mut app = Self {
@@ -76,10 +87,27 @@ impl LauncherApp {
             created_at: std::time::Instant::now(),
             bookmarks,
             apps,
+            lnk_apps,
+            store_rx,
             history,
         };
         app.update_candidates();
         app
+    }
+
+    /// バックグラウンド取得した Store アプリ一覧が届いていれば取り込む
+    fn poll_store_apps(&mut self) {
+        let Some(rx) = &self.store_rx else { return };
+        match rx.try_recv() {
+            Ok(store) => {
+                self.apps = launcher_apps::merge_apps(self.lnk_apps.clone(), store);
+                self.store_rx = None;
+                self.update_candidates();
+            }
+            Err(TryRecvError::Empty) => {}
+            // 取得失敗（警告は取得側で出力済み）。キャッシュ + .lnk のまま続ける
+            Err(TryRecvError::Disconnected) => self.store_rx = None,
+        }
     }
 
     fn update_candidates(&mut self) {
@@ -105,7 +133,7 @@ impl LauncherApp {
                 action: match entry.category.as_str() {
                     "app" => CandidateAction::LaunchApp(AppEntry {
                         name: entry.label.clone(),
-                        path: entry.action.clone(),
+                        target: AppTarget::from_history_key(&entry.action),
                     }),
                     "bookmark" | "url" => CandidateAction::OpenBookmark(entry.action.clone()),
                     "search" => {
@@ -177,7 +205,7 @@ impl LauncherApp {
             // 履歴と重複チェック
             if self.candidates.iter().any(|c| {
                 if let CandidateAction::LaunchApp(ref a) = c.action {
-                    a.path == app.path
+                    a.target == app.target
                 } else {
                     false
                 }
@@ -273,7 +301,7 @@ impl LauncherApp {
             CandidateAction::CopyText(text) => (text.clone(), "calc"),
             CandidateAction::OpenUrl(url) => (url.clone(), "url"),
             CandidateAction::OpenBookmark(url) => (url.clone(), "bookmark"),
-            CandidateAction::LaunchApp(app) => (app.path.clone(), "app"),
+            CandidateAction::LaunchApp(app) => (app.target.history_key(), "app"),
             CandidateAction::WebSearch(q) => (format!("search:{}", q), "search"),
         };
         self.history.record(&action_str, &candidate.label, category);
@@ -306,6 +334,8 @@ impl LauncherApp {
 
 impl eframe::App for LauncherApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_store_apps();
+
         // フォーカス喪失で閉じる（初期フレーム後）
         let focused = ctx.input(|i| i.focused);
         if self.created_at.elapsed().as_millis() > 500 {
