@@ -528,18 +528,38 @@ fn open_url(url: &str) {
     // クエリ付き URL の破損やコマンド注入につながる。ShellExecute 相当を安全に扱う
     // `open` crate に委ねる（Windows/macOS/Linux を横断で正しく処理）。
     if let Err(e) = open::that(url) {
-        report_failure(&format!("URL を開けませんでした ({}): {}", url, e));
+        report_failure(&format!(
+            "URL を開けませんでした ({}): {:?}",
+            url_origin(url),
+            e.kind()
+        ));
     }
 }
 
-/// 起動失敗を示すメッセージを組み立てる（何をどう起動しようとして何のエラーか）
+/// ログと通知に出してよい URL の部分（スキームとホストだけ）を返す。
+/// パス・クエリ・認証情報にはトークン等が入りうるため、永続ログに残さない。
+fn url_origin(url: &str) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (Some(s), r),
+        None => (None, url),
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    match scheme {
+        Some(s) => format!("{}://{}", s, host),
+        None => host.to_string(),
+    }
+}
+
+/// 起動失敗を示すメッセージを組み立てる。
+/// 引数にはトークン等が入りうるため件数だけを出し、プログラム名（ユーザー自身の設定値）とエラーは残す。
 fn format_spawn_failure(command: &str, args: &[String], err: &std::io::Error) -> String {
-    let full = if args.is_empty() {
+    let target = if args.is_empty() {
         command.to_string()
     } else {
-        format!("{} {}", command, args.join(" "))
+        format!("{}、引数 {} 個", command, args.len())
     };
-    format!("コマンドを起動できませんでした ({}): {}", full, err)
+    format!("コマンドを起動できませんでした ({}): {}", target, err)
 }
 
 /// GUI アプリは stderr が見えないため、ログ（stderr はログファイルへ）とトレイ通知の両方に出す
@@ -611,12 +631,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_format_spawn_failure_includes_command_args_and_error() {
+    fn test_format_spawn_failure_hides_args_but_keeps_program_and_error() {
         let err = std::io::Error::new(std::io::ErrorKind::NotFound, "not found");
-        let args = vec!["--flag".to_string(), "x".to_string()];
+        let args = vec!["--token=secret123".to_string(), "x".to_string()];
         let msg = format_spawn_failure("foo.exe", &args, &err);
-        assert!(msg.contains("foo.exe --flag x"));
+        assert!(msg.contains("foo.exe"));
+        assert!(msg.contains("引数 2 個"));
         assert!(msg.contains("not found"));
+        assert!(!msg.contains("secret123"));
+    }
+
+    #[test]
+    fn test_url_origin_drops_path_query_and_userinfo() {
+        assert_eq!(
+            url_origin("https://user:pass@example.com/a/b?token=secret#x"),
+            "https://example.com"
+        );
+        assert_eq!(url_origin("example.com/path?q=1"), "example.com");
     }
 
     #[test]
@@ -624,6 +655,7 @@ mod tests {
         let err = std::io::Error::new(std::io::ErrorKind::NotFound, "nope");
         let msg = format_spawn_failure("foo.exe", &[], &err);
         assert!(msg.contains("(foo.exe)"));
+        assert!(!msg.contains("引数"));
     }
 
     #[test]
