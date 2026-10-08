@@ -11,7 +11,7 @@
 
 use global_hotkey::{
     hotkey::{Code, HotKey, Modifiers},
-    GlobalHotKeyEvent, GlobalHotKeyManager,
+    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
 };
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem},
@@ -531,6 +531,12 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
 
             // --- ホットキーイベントの処理 ---
             while let Ok(event) = GlobalHotKeyEvent::receiver().try_recv() {
+                // global-hotkey は押下と解放の両方を通知する。Windows 実装では解放の通知が
+                // 次のホットキー押下の直前まで遅れて届くことがあり、解放でも起動すると
+                // 別のホットキーと同時に二重起動する（実測: Alt+Space の後に Alt+H で両方開く）
+                if event.state != HotKeyState::Pressed {
+                    continue;
+                }
                 if event.id == hk_popup.id() {
                     if last_popup_hotkey_time.elapsed().as_millis() < 300 {
                         continue;
