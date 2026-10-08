@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use crate::clipboard;
 use crate::clipboard_history::SharedStore;
 use crate::clipboard_store::{ClipboardEntry, EntryType};
+use crate::focus_close::FocusLossClose;
 
 /// 1ページあたりの表示件数
 const ITEMS_PER_PAGE: usize = 100;
@@ -39,6 +40,7 @@ pub struct ClipboardHistoryPopup {
     first_frame: bool,
     /// フォーカス追跡
     had_focus: bool,
+    focus_close: FocusLossClose,
     created_at: Instant,
     /// 選択されたエントリのID（コピー用）
     selected_entry_id: Option<String>,
@@ -61,6 +63,7 @@ impl ClipboardHistoryPopup {
             search_dirty: true,
             first_frame: true,
             had_focus: false,
+            focus_close: FocusLossClose::default(),
             created_at: Instant::now(),
             selected_entry_id: None,
             selected_index: -1,
@@ -338,7 +341,14 @@ impl eframe::App for ClipboardHistoryPopup {
         let focused = is_current_process_foreground();
         if focused {
             self.had_focus = true;
-        } else if self.had_focus || self.created_at.elapsed() > Duration::from_millis(1500) {
+            self.focus_close.on_focused();
+        } else if self.had_focus {
+            if self.focus_close.on_unfocused(ctx) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+        } else if self.created_at.elapsed() > Duration::from_millis(1500) {
+            // 一度も前面に来なかった（起動時にフォーカスを取れなかった）
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -678,7 +688,6 @@ pub fn show_clipboard_history(store: SharedStore) -> Result<(), Box<dyn std::err
             .with_inner_size([1100.0, 600.0])
             .with_decorations(false)
             .with_always_on_top()
-            .with_transparent(true)
             .with_resizable(true),
         // 別スレッドからEventLoopを作成可能にする（tray.rsからthread::spawnで呼ばれるため）
         event_loop_builder: Some(Box::new(|builder| {
