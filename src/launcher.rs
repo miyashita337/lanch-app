@@ -17,6 +17,7 @@ use eframe::egui;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 use crate::config::Config;
+use crate::focus_close::FocusLossClose;
 use crate::launcher_apps::{self, AppEntry, AppTarget};
 use crate::launcher_bookmarks::{self, BookmarkEntry};
 use crate::launcher_calc;
@@ -48,6 +49,9 @@ enum CandidateAction {
     WebSearch(String),
 }
 
+/// 起動直後はフォーカスが定まらないため、喪失判定をしない期間
+const STARTUP_FOCUS_IGNORE: std::time::Duration = std::time::Duration::from_millis(500);
+
 struct LauncherApp {
     config: Config,
     query: String,
@@ -55,6 +59,7 @@ struct LauncherApp {
     selected_index: i32,
     first_frame: bool,
     had_focus: bool,
+    focus_close: FocusLossClose,
     created_at: std::time::Instant,
     // プリロード済みデータ
     bookmarks: Vec<BookmarkEntry>,
@@ -71,10 +76,8 @@ impl LauncherApp {
         let bookmarks = launcher_bookmarks::load_bookmarks(&config.launcher_bookmark_profiles);
         let lnk_apps = launcher_apps::scan_lnk_apps();
         // 前回取得分をすぐ使い、最新の一覧はバックグラウンドで取得する
-        let apps = launcher_apps::merge_apps(
-            lnk_apps.clone(),
-            launcher_apps::load_cached_store_apps(),
-        );
+        let apps =
+            launcher_apps::merge_apps(lnk_apps.clone(), launcher_apps::load_cached_store_apps());
         let store_rx = Some(launcher_apps::spawn_store_refresh());
         let history = LauncherHistory::load();
 
@@ -85,6 +88,7 @@ impl LauncherApp {
             selected_index: 0,
             first_frame: true,
             had_focus: false,
+            focus_close: FocusLossClose::default(),
             created_at: std::time::Instant::now(),
             bookmarks,
             apps,
@@ -342,14 +346,15 @@ impl eframe::App for LauncherApp {
 
         // フォーカス喪失で閉じる（初期フレーム後）
         let focused = ctx.input(|i| i.focused);
-        if self.created_at.elapsed().as_millis() > 500 {
-            if self.had_focus && !focused {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                return;
-            }
-        }
         if focused {
             self.had_focus = true;
+            self.focus_close.on_focused();
+        } else if self.had_focus
+            && self.created_at.elapsed() > STARTUP_FOCUS_IGNORE
+            && self.focus_close.on_unfocused(ctx)
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
         }
 
         // Escで閉じる
@@ -524,7 +529,6 @@ pub fn show_launcher(config: Config) -> Result<(), Box<dyn std::error::Error>> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([600.0, 500.0])
             .with_decorations(false)
-            .with_transparent(true)
             .with_always_on_top()
             .with_resizable(false),
         ..Default::default()

@@ -17,6 +17,7 @@ mod clipboard_history;
 mod clipboard_store;
 mod clipboard_ui;
 mod config;
+mod focus_close;
 mod formatter;
 mod lang;
 mod notification;

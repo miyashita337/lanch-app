@@ -23,14 +23,14 @@ const VK_CONTROL: u8 = 0x11;
 const VK_C: u8 = 0x43;
 const VK_INSERT: u8 = 0x2D;
 const VK_ESCAPE: u8 = 0x1B;
-const VK_MENU: u8 = 0x12;    // Alt (generic)
-const VK_LMENU: u8 = 0xA4;   // 左 Alt
-const VK_RMENU: u8 = 0xA5;   // 右 Alt
-const VK_SHIFT: u8 = 0x10;   // Shift (generic)
-const VK_LSHIFT: u8 = 0xA0;  // 左 Shift
-const VK_RSHIFT: u8 = 0xA1;  // 右 Shift
-const VK_LCONTROL: u8 = 0xA2;// 左 Ctrl
-const VK_RCONTROL: u8 = 0xA3;// 右 Ctrl
+const VK_MENU: u8 = 0x12; // Alt (generic)
+const VK_LMENU: u8 = 0xA4; // 左 Alt
+const VK_RMENU: u8 = 0xA5; // 右 Alt
+const VK_SHIFT: u8 = 0x10; // Shift (generic)
+const VK_LSHIFT: u8 = 0xA0; // 左 Shift
+const VK_RSHIFT: u8 = 0xA1; // 右 Shift
+const VK_LCONTROL: u8 = 0xA2; // 左 Ctrl
+const VK_RCONTROL: u8 = 0xA3; // 右 Ctrl
 
 /// 指定キーが物理的に押されているかチェック
 #[cfg(windows)]
@@ -99,13 +99,20 @@ fn debug_log(msg: &str) {
     }
 }
 
+#[cfg(not(windows))]
+pub(crate) fn get_foreground_process_info() -> Option<(u32, String)> {
+    None
+}
+
 #[cfg(windows)]
-fn get_foreground_process_info() -> Option<(u32, String)> {
+pub(crate) fn get_foreground_process_info() -> Option<(u32, String)> {
     use windows_sys::Win32::Foundation::CloseHandle;
     use windows_sys::Win32::System::Threading::{
         OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
 
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -425,7 +432,9 @@ pub fn copy_selected_text() -> Option<String> {
 
         let start = std::time::Instant::now();
         while start.elapsed().as_millis() < 1200 {
-            let new_text = arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok());
+            let new_text = arboard::Clipboard::new()
+                .ok()
+                .and_then(|mut cb| cb.get_text().ok());
 
             if let Some(text) = new_text {
                 let trimmed = text.trim();
