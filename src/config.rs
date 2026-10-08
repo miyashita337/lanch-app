@@ -68,6 +68,10 @@ pub struct Config {
 
     /// ランチャーショートカット定義
     pub launcher_shortcuts: Vec<LauncherShortcut>,
+
+    /// ブックマークを走査する Chrome プロファイルのディレクトリ名（例: "Default", "Profile 2"）
+    /// 空 = Default と Profile 1〜5 を走査
+    pub launcher_bookmark_profiles: Vec<String>,
 }
 
 /// ランチャーのショートカット定義
@@ -130,6 +134,7 @@ impl Default for Config {
                     ],
                 },
             ],
+            launcher_bookmark_profiles: Vec::new(),
         }
     }
 }
@@ -324,6 +329,20 @@ mod tests {
         assert_eq!(config.engine, default.engine);
         assert_eq!(config.hotkey_popup, default.hotkey_popup);
         assert_eq!(config.claude_model, default.claude_model);
+    }
+
+    #[test]
+    fn test_launcher_bookmark_profiles_default_empty_and_compatible() {
+        // 旧 config.json（フィールドなし）でも空リストで読める
+        let config: Config = serde_json::from_str(r#"{"engine": "google"}"#).unwrap();
+        assert!(config.launcher_bookmark_profiles.is_empty());
+    }
+
+    #[test]
+    fn test_launcher_bookmark_profiles_parsed() {
+        let json = r#"{"launcher_bookmark_profiles": ["Default", "Profile 2"]}"#;
+        let config: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(config.launcher_bookmark_profiles, ["Default", "Profile 2"]);
     }
 
     // --- 設定値のバリデーション的テスト ---
