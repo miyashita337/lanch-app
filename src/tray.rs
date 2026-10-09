@@ -178,18 +178,24 @@ fn handle_markdown_format(config: &Config) {
     // ワーカースレッド起動時はこのガードをスレッドへ move し、整形完了まで保持する。
     let guard = FormatGuard;
 
-    let text = match clipboard::copy_selected_text() {
-        Some(t) => t,
-        None => {
-            eprintln!("選択テキストの取得に失敗");
-            notification::show_error("Lanch App", "選択テキストの取得に失敗しました");
+    // 整形対象は選択範囲ではなく、ユーザーが自分でコピーしたクリップボードの内容。
+    // Ctrl+C を送り込んで選択を取る方式は、端末（wmux）では何も取れず、
+    // Claude デスクトップでは表の 1 行目しか取れなかった。加えて送り込む Esc が
+    // 端末上の実行中プロセスに届いて作業を止める恐れがある。
+    let text = match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+        Ok(t) if !t.trim().is_empty() => t,
+        other => {
+            eprintln!(
+                "[format] クリップボードにテキストがありません: {:?}",
+                other.err()
+            );
+            notification::show_error(
+                "Lanch App",
+                "クリップボードにテキストがありません（Ctrl+C でコピーしてから押してください）",
+            );
             return;
         }
     };
-
-    if text.is_empty() {
-        return;
-    }
 
     // Claude API 呼び出しはブロッキングなので別スレッドで実行
     // スピナーを表示して処理完了を待つ
