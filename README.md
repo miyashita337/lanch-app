@@ -9,7 +9,7 @@ quick-translate をベースに、Claude によるMarkdown整形機能を統合�
 |---|---|---|
 | `Ctrl+Shift+T` | 翻訳ポップアップ | テキスト入力 → リアルタイム翻訳 |
 | `Ctrl+Shift+Y` | 選択テキスト翻訳 | 選択中のテキストを自動翻訳 → ポップアップ表示 |
-| `Ctrl+Shift+F` | Markdown整形 | 選択中のテキストを Claude で整形 → クリップボードにコピー（サイレント） |
+| `Ctrl+Shift+F` | Markdown整形 | クリップボードのテキストを Claude で整形 → クリップボードにコピー（サイレント） |
 
 ## セットアップ
 
@@ -104,9 +104,9 @@ cargo run --release -- --help
 
 ## Markdown整形の動作フロー
 
-1. テキストを選択
+1. 整形したいテキストを Ctrl+C でコピー
 2. `Ctrl+Shift+F` を押す
-3. 自動で Ctrl+C → クリップボードにコピー
+3. クリップボードのテキストを読み取る
 4. バックエンド自動選択（API直接 or Claude CLI）
 5. Claude に送信 → Markdown形式に整形
 6. 整形結果がクリップボードにコピーされる
