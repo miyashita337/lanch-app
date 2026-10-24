@@ -7,9 +7,11 @@ quick-translate をベースに、Claude によるMarkdown整形機能を統合�
 
 | ショートカット | 機能 | 説明 |
 |---|---|---|
-| `Ctrl+Shift+T` | 翻訳ポップアップ | テキスト入力 → リアルタイム翻訳 |
-| `Ctrl+Shift+Y` | 選択テキスト翻訳 | 選択中のテキストを自動翻訳 → ポップアップ表示 |
+| `Ctrl+Shift+Z` | 翻訳ポップアップ | テキスト入力 → リアルタイム翻訳 |
+| `Alt+Z` | 選択テキスト翻訳 | 選択中のテキストを自動翻訳 → ポップアップ表示 |
 | `Ctrl+Shift+F` | Markdown整形 | クリップボードのテキストを Claude で整形 → クリップボードにコピー（サイレント） |
+| `Ctrl+H` | クリップボード履歴 | 履歴ポップアップを開く |
+| `Alt+Space` | ランチャー | アプリ / ブックマーク / 電卓を検索して起動 |
 
 ## セットアップ
 
@@ -89,8 +91,8 @@ cargo run --release -- --help
   "font_size": 16.0,
   "opacity": 0.95,
   "log_enabled": true,
-  "hotkey_popup": "ctrl+shift+t",
-  "hotkey_selected": "ctrl+shift+y",
+  "hotkey_popup": "ctrl+shift+z",
+  "hotkey_selected": "alt+z",
   "hotkey_format": "ctrl+shift+f"
 }
 ```

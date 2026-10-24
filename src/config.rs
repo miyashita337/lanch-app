@@ -101,11 +101,11 @@ impl Default for Config {
             font_size: 16.0,
             opacity: 0.95,
             log_enabled: true,
-            hotkey_popup: "ctrl+shift+t".to_string(),
-            hotkey_selected: "ctrl+shift+y".to_string(),
+            hotkey_popup: "ctrl+shift+z".to_string(),
+            hotkey_selected: "alt+z".to_string(),
             hotkey_format: "ctrl+alt+f".to_string(),
-            hotkey_clipboard_history: "ctrl+shift+v".to_string(),
-            hotkey_launcher: "ctrl+alt+space".to_string(),
+            hotkey_clipboard_history: "ctrl+h".to_string(),
+            hotkey_launcher: "alt+space".to_string(),
             launcher_shortcuts: vec![
                 LauncherShortcut {
                     key: "cc".into(),
@@ -265,10 +265,10 @@ mod tests {
     #[test]
     fn test_default_hotkeys() {
         let config = Config::default();
-        assert_eq!(config.hotkey_popup, "ctrl+shift+t");
-        assert_eq!(config.hotkey_selected, "ctrl+shift+y");
+        assert_eq!(config.hotkey_popup, "ctrl+shift+z");
+        assert_eq!(config.hotkey_selected, "alt+z");
         assert_eq!(config.hotkey_format, "ctrl+alt+f");
-        assert_eq!(config.hotkey_clipboard_history, "ctrl+shift+v");
+        assert_eq!(config.hotkey_clipboard_history, "ctrl+h");
     }
 
     #[test]
@@ -307,9 +307,9 @@ mod tests {
         assert_eq!(config.font_size, 20.0);
         // 省略されたフィールドはデフォルト値
         assert_eq!(config.source_lang, "auto");
-        assert_eq!(config.hotkey_popup, "ctrl+shift+t");
+        assert_eq!(config.hotkey_popup, "ctrl+shift+z");
         assert_eq!(config.claude_model, "claude-haiku-4-5-20251001");
-        assert_eq!(config.hotkey_clipboard_history, "ctrl+shift+v");
+        assert_eq!(config.hotkey_clipboard_history, "ctrl+h");
     }
 
     #[test]
