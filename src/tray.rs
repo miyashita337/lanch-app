@@ -5,8 +5,8 @@
 // - ポップアップ: 別プロセスとして起動（eframeがメインスレッドを占有するため）
 //
 // ホットキー:
-//   Ctrl+Shift+T → 入力ポップアップ（自分で文字を打つ）
-//   Ctrl+Shift+Y → 選択テキスト翻訳（Ctrl+Cしてから翻訳→結果表示）
+//   Ctrl+Shift+Z → 入力ポップアップ（自分で文字を打つ）
+//   Alt+Z → 選択テキスト翻訳（Ctrl+Cしてから翻訳→結果表示）
 //   Ctrl+Shift+F → 選択テキストMarkdown整形（Ctrl+Cしてから整形→クリップボード）
 
 use global_hotkey::{
@@ -379,11 +379,11 @@ pub fn run_tray(config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     // --- グローバルホットキーの登録 ---
     let hotkey_manager = GlobalHotKeyManager::new()?;
 
-    let default_popup = "ctrl+shift+t".to_string();
-    let default_selected = "ctrl+shift+y".to_string();
+    let default_popup = "ctrl+shift+z".to_string();
+    let default_selected = "alt+z".to_string();
     let default_format = "ctrl+alt+f".to_string();
-    let default_history = "ctrl+shift+v".to_string();
-    let default_launcher = "ctrl+alt+space".to_string();
+    let default_history = "ctrl+h".to_string();
+    let default_launcher = "alt+space".to_string();
 
     let popup_spec = if config.hotkey_popup.trim().is_empty() {
         default_popup.as_str()

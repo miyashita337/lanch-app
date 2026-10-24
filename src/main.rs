@@ -138,8 +138,8 @@ impl CliArgs {
                     println!("  lanch-app --engine google|deepl      翻訳エンジンを指定");
                     println!();
                     println!("トレイ常駐時のショートカット:");
-                    println!("  Ctrl+Shift+T  翻訳ポップアップを開く");
-                    println!("  Ctrl+Shift+Y  選択テキストを翻訳");
+                    println!("  Ctrl+Shift+Z  翻訳ポップアップを開く");
+                    println!("  Alt+Z         選択テキストを翻訳");
                     println!("  Ctrl+Shift+F  選択テキストをMarkdown整形（サイレント）");
                     println!();
                     println!("設定ファイル: ~/.lanch-app/config.json");
